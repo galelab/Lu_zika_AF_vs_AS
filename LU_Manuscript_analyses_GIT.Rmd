@@ -1,0 +1,1188 @@
+---
+title: "relative_gene_expression"
+author: "andrew_gustin"
+date: "7/18/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Begin by loading packTreatments
+```{r}
+# Load PackTreatments
+library(FactoMineR)
+library(ggplot2)
+library(gplots)
+library(ggpubr)
+library(viridis)
+library(reshape2)
+library(FactoMineR)
+library(factoextra)
+library(RColorBrewer)
+library(scales)
+library(compositions)
+library(zCompositions)
+library(dplyr)
+library(tidyverse)
+library(colorspace)
+```
+
+add a figure theme, which will be used throughout
+```{r}
+theme_Publication <- function(base_size=14, base_family = "Arial" ) {
+      library(grid)
+      library(ggthemes)
+      library(RColorBrewer)
+      (theme_foundation(base_size=base_size, base_family=base_family)
+       + theme(plot.title = element_text(face = "bold",
+                                         size = rel(1.2), hjust = 0.5),
+               text = element_text(),
+               panel.background = element_rect(colour = NA),
+               plot.background = element_rect(colour = NA),
+               panel.border = element_rect(colour = NA),
+               axis.title = element_text(face = "bold",size = rel(1)),
+               axis.title.y = element_text(angle=90,vjust =2),
+               axis.title.x = element_text(vjust = -0.2),
+               axis.text = element_text(), 
+               axis.line = element_line(colour="black"),
+               axis.ticks = element_line(),
+               panel.grid.major = element_line(colour="#f0f0f0"),
+               panel.grid.minor = element_blank(),
+               legend.key = element_rect(colour = NA),
+               legend.title = element_text(face="italic"),
+               plot.margin=unit(c(10,5,5,5),"mm"),
+               strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+               strip.text = element_text(face="bold")
+          ))
+      
+}
+
+
+theme_pca <- function() {
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size = rel(1.1)),
+    axis.title.y = element_text(angle=90,vjust =2),
+    axis.ticks = element_line(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour="black")
+    
+  )
+}
+
+
+theme_bars_boxes <- function() {
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text = element_text(size= rel(1.1)),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size = rel(1)),
+    axis.title.y = element_text(angle=90,vjust =2),
+    axis.ticks = element_line(),
+    strip.text = element_text(size = rel(1.1),face = "bold"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour="black")
+    
+  )
+}
+```
+
+
+#Load nCounter data & metadata
+```{r}
+#ncounter data is coming from a csv file and will be called "raw"
+raw <- read.csv(file="amy_lu_nanostring_raw_counts.csv",row.names = 1, header=TRUE, check.names=FALSE,stringsAsFactors = FALSE,na.strings = c(""))
+
+#the experimental metadata is also coming from a csv file and will be called "pData"
+pData_01 <- read.csv(file = "./AL60_metadata.csv",header = TRUE,colClasses = "character",na.strings = c(""))
+pData_02 <- read.csv(file = "./AL64_metadata.csv",header = TRUE,colClasses = "character",na.strings = c(""))
+pData_03 <- read.csv(file = "./AL74_metadata.csv",header = TRUE,colClasses = "character",na.strings = c(""))
+
+pData_01$sample_number <- c(1:24)
+pData_02$sample_number <- c(1:24)
+pData_03$sample_number <- c(1:24)
+
+
+pData <- rbind(pData_01,pData_02,pData_03)
+
+pData$hpi <-  gsub("hpi","",pData$Timepoint)
+pData$hpi <- as.numeric(pData$hpi)
+
+pData$Timepoint <- factor(pData$Timepoint , levels =c("4hpi","8hpi","10hpi","24hpi","48hpi","72hpi"))
+
+pData$Treatment <- factor(pData$Treatment,levels = c("Uninfected","Mock","ZIKV_Dakar","ZIKV_Malaysia"))
+
+
+
+#create a df with the class of each gene (endogenous = gene of interest; positive and negative = spik-in controls; Housekeeping = genes predicted to be unimpacted by experimental conditions)
+gene <- rownames(raw)
+fData <- data.frame(gene)
+fData$Class <- c(rep("endogenous",44),rep("positive",6),rep("negative",8),rep("housekeeping",6))
+```
+
+
+#examine raw counts
+```{r}
+#examine raw counts by building a melted df that contains both pData and fData in addition to raw counts
+melted_raw <- melt(t(raw))
+melted_raw <- left_join(melted_raw,pData,by = c("Var1" = "Sample_ID"))
+melted_raw <- left_join(melted_raw, fData, by = c("Var2" = "gene"))
+
+
+ggplot(melted_raw, aes(x = Var1,y = value,fill = Class)) +
+    geom_bar(stat = "identity")+
+    theme_minimal() + scale_fill_manual(values = c("#ff615d","#004c7a","#ffd400","#61c57b"))+
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 8)) + ggtitle("a) Total raw counts")
+    
+ggplot(melted_raw, aes(x = Var1,y = log2(value),fill = Class)) +
+    geom_bar(stat = "identity")+
+    theme_minimal() + scale_fill_manual(values = c("#ff615d","#004c7a","#ffd400","#61c57b")) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 8)) + ggtitle("b) Log2() raw counts")
+
+ggplot(melted_raw, aes(x = Var1,y = value,fill = Class)) +
+    geom_bar(stat = "identity", position = "fill")+
+    scale_y_continuous(labels = percent_format()) +
+    theme_minimal() + scale_fill_manual(values = c("#ff615d","#004c7a","#ffd400","#61c57b"))+
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 8)) + ggtitle("c) Relative raw counts")
+
+
+ggplot(melted_raw, aes(x = Var1,y = value,fill = Class)) +
+    geom_bar(stat = "identity")+
+    theme_minimal() + scale_fill_manual(values = c("#ff615d","#004c7a","#ffd400","#61c57b"))+
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 8)) + ggtitle("d) Total raw counts") + facet_wrap(~Class,nrow = 1)
+    
+ggplot(melted_raw, aes(x = Var1,y = log2(value),fill = Class)) +
+    geom_bar(stat = "identity")+
+    theme_minimal() + scale_fill_manual(values = c("#ff615d","#004c7a","#ffd400","#61c57b")) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 8)) + ggtitle("e) Log2() raw counts") +
+  facet_wrap(~Class,nrow = 1)
+
+
+```
+
+
+
+
+
+
+
+Assess HK genes (alongside all genes)
+
+CV = σ / μ   (https://www.statology.org/what-is-a-good-coefficient-of-variation/)
+where:
+    σ: The standard deviation of dataset
+    μ: The mean of dataset
+    
+
+    A CV of 0.5 means the standard deviation is half as large as the mean.
+    A CV of 1 means the standard deviation is equal to the mean.
+    A CV of 1.5 means the standard deviation is 1.5 times larger than the mean.
+
+on raw counts   
+```{r}
+
+all <- t(raw) %>% melt
+colnames(all) <- c("Sample_ID","gene","raw_counts")
+
+#calculate coefficient of variation for each gene
+all_CV <- all %>% dplyr::group_by(gene) %>%
+    dplyr::summarise(stdev = sd(raw_counts),mean = mean(raw_counts),CV = stdev/mean)
+
+all <- left_join(all,all_CV, by = "gene")
+all <- left_join(all,pData, by = c("Sample_ID" = "Sample_ID"))
+all <- left_join(all,fData,by = "gene")
+
+#plot CV from most to least 
+ggplot(all,aes(gene,CV,fill = Class)) + 
+  geom_bar(stat='identity') + 
+  aes(x = fct_reorder(gene,-CV)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 15)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 6)) +
+  ggtitle("Genes ranked by CV of raw counts, most to least")
+
+
+
+#visualize dispersion
+ggplot(all,aes(gene,raw_counts,color = Class)) + 
+  geom_boxplot() +
+  aes(x = fct_reorder(gene,-CV)) + 
+  #facet_grid(~Treatment) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 6)) +
+  ggtitle("Dispersion of raw counts, ranked by CV")
+
+
+```
+
+on log2(raw) counts   
+```{r}
+all <- t(raw) %>% melt
+colnames(all) <- c("Sample_ID","gene","raw_counts")
+all$log2_raw_counts <- log2(all$raw_counts)
+
+#calculate coefficient of variation for each gene
+all_CV <- all %>% dplyr::group_by(gene) %>%
+    dplyr::summarise(stdev = sd(raw_counts),mean = mean(raw_counts),CV = as.numeric(stdev/mean))
+
+all <- left_join(all,all_CV, by = "gene")
+all <- left_join(all,pData, by = c("Sample_ID" = "Sample_ID"))
+all <- left_join(all,fData,by = "gene")
+
+#plot CV from most to least 
+ggplot(all,aes(gene,CV,fill = Class)) + 
+  geom_bar(stat='identity') + 
+  aes(x = fct_reorder(gene,-CV)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 15)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  ggtitle("Genes ranked by CV of log2(raw counts), most to least")
+
+
+
+#visualize dispersion
+ggplot(all,aes(gene,log2_raw_counts,color = Class)) + 
+  geom_boxplot() +
+  aes(x = fct_reorder(gene,-CV)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  ggtitle("Dispersion of raw log2(counts), ranked by CV")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+______
+
+Choose the genes that will function as a reference population within each samples
+Prioritizing HK genes
+  evaluating based on CV rank and dispersion that appears Treatment dependent
+      e.g. the interquartile range (IQR) for Gapdh and Pgk1 do not all overlap when considering Treatment
+
+
+
+
+```{r}
+# choose reference genes and calculate their geometric mean (will be w/in sample tethers)
+
+
+ref <- raw[c("ACTB","HPRT1","GAPDH","SDHA","ABCF1"),] %>% t() %>% melt() 
+colnames(ref) <- c("Sample_ID","gene","raw_counts")
+
+#calculate the geometric mean of the reference genes within each sample (vector)
+ref_geo <- ref %>% dplyr::group_by(Sample_ID) %>%
+    dplyr::summarise(tether_gene_geo_mean = exp(mean(log(raw_counts))))
+
+```
+
+
+
+Because CLR/ALR approaches utilize a log transformation of the desired ratios, we need to make sure that there are not zeros in the numerators (GOI), which we know occurs in a small subset of samples.  TO correct for this, we utilize the zCompositions:: packTreatment to generate non-zeros while keeping the ratios of all other counts in the sample consistent.  (per the fx description - "This function implements methods for imputing zeros in compositional count data sets based on a Bayesian-multiplicative replacement.")
+
+```{r}
+#account for 0s 
+raw.no0 <- cmultRepl(raw, output = "p-counts")
+
+
+#make data relative to reference genes (ref object)
+melted_raw <- melt(t(raw.no0))
+colnames(melted_raw) <- c("Sample_ID","gene","raw_counts")
+ref_relative_data <- left_join(melted_raw, ref_geo, by = "Sample_ID")
+#ref_relative_data$log_counts <- log2(ref_relative_data$raw_counts)
+ref_relative_data$ratio_goi_to_tether <- ref_relative_data$raw_counts / ref_relative_data$tether_gene_geo_mean
+#ref_relative_data$difference_goi_to_tether <- ref_relative_data$raw_counts - ref_relative_data$tether_gene_geo_mean
+#ref_relative_data$relative_log_counts <- ref_relative_data$log_counts / ref_relative_data$log2_geo
+
+
+#add pData and fData
+ref_relative_data <- left_join(ref_relative_data,pData,by = c("Sample_ID" = "Sample_ID"))
+ref_relative_data <- left_join(ref_relative_data, fData, by = "gene")
+
+gene_order <- ref_relative_data %>% group_by(gene) %>% top_n(n = 1,wt = ratio_goi_to_tether) %>% arrange(desc(ratio_goi_to_tether))
+gene_order <- gene_order$gene
+
+
+ref_relative_data$gene <- factor(ref_relative_data$gene, levels = gene_order)
+
+ref_relative_data <- subset(ref_relative_data, Treatment!="Uninfected")
+ref_relative_data <- subset(ref_relative_data, Timepoint!="72")
+ref_relative_data <- subset(ref_relative_data, hpi!=72)
+
+```
+
+
+```{r}
+#ground truth plots examining ratios of GOI to tether at different TP across Treatments
+
+ggplot(subset(ref_relative_data,Class=="endogenous"),aes(Timepoint,ratio_goi_to_tether,fill = Treatment)) +
+  facet_wrap(~gene,scales = "free_y",nrow = 4) +
+  geom_boxplot() +
+  theme_bars_boxes()
+
+ggplot(subset(ref_relative_data,Class=="endogenous"),aes(hpi,ratio_goi_to_tether,color = Treatment)) +
+  facet_wrap(~gene,scales = "free_y",nrow = 4) +
+  stat_summary(aes(group = Treatment),geom = "line",fun = "median")  +
+  scale_x_continuous(breaks = unique(ref_relative_data$hpi)) + 
+  theme_bars_boxes()
+
+ggplot(subset(ref_relative_data,Class=="endogenous"),aes(Timepoint,ratio_goi_to_tether,color = Treatment)) +facet_wrap(~gene,scales = "free_y",nrow = 4) +stat_summary(aes(group = Treatment),geom = "line",fun = "median",size = 1.5)   + scale_color_manual(values = c("gray","black","red")) + theme_bars_boxes()
+
+
+```
+
+
+#plot tethered data (ratio of goi:tether)
+```{r}
+#boxplot  - endog only
+ggplot(subset(ref_relative_data,Class=="endogenous"),aes(Sample_ID,ratio_goi_to_tether))+ theme_bars_boxes()+geom_boxplot(outlier.alpha = 1) +ggtitle("Log2 tethered GOI Counts") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 12)) 
+
+# LOG2 boxplot  - endog only
+ggplot(subset(ref_relative_data,Class=="endogenous"),aes(Sample_ID,log2(ratio_goi_to_tether)))+ theme_bars_boxes()+geom_boxplot(outlier.alpha = 0) +ggtitle("Log2 tethered GOI Counts") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 12)) 
+
+##lineplot - faceted/class
+ggplot(ref_relative_data,aes(Sample_ID,log2(ratio_goi_to_tether)))+ theme_bars_boxes() + geom_line(aes(group = gene,color = Class)) +ggtitle("Log2 tethered GOI Counts") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 12)) + facet_wrap(~Class)
+
+##log2 lineplot - faceted/gene
+ggplot(ref_relative_data,aes(Sample_ID,log2(ratio_goi_to_tether)))+ theme_bars_boxes() + geom_line(aes(group = gene,color = Class)) +ggtitle("Log2 tethered GOI Counts") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,size = 12)) + facet_wrap(~gene)
+
+
+```
+
+
+
+
+compare PCA of CLR, ALR, and our tethered approach (tethered-LR)
+
+```{r}
+ref_relative_data$tethered_LR <- log2(ref_relative_data$ratio_goi_to_tether)
+
+ref_relative_data$CLR <- as.numeric(clr(ref_relative_data$raw_counts))
+
+alr_reference <- subset(ref_relative_data,gene == "ACTB")
+alr_reference <- alr_reference[,c(1,3)]
+colnames(alr_reference) <- c("Sample_ID","alr_reference")
+ref_relative_data<- left_join(ref_relative_data,alr_reference, by = "Sample_ID")
+ref_relative_data$ALR <-log2(ref_relative_data$raw_counts/ref_relative_data$alr_reference)
+```
+
+
+
+
+
+#PCA based on log2 raw counts
+```{r}
+pca_data <- ref_relative_data[,c(1,2,3)]
+pca_data$raw_counts <- log2(pca_data$raw_counts)
+pca_data <- dcast(data = pca_data,formula = Sample_ID ~ gene )
+
+
+endog <- subset(fData,Class=="endogenous")
+endog <- c("Sample_ID",as.character(endog$gene))
+pca_data <- pca_data[,endog]
+
+pca_data <- left_join(pca_data, pData, by = c("Sample_ID" = "Sample_ID"))
+rownames(pca_data) <- pca_data$Sample_ID
+pca_data <- pca_data[,2:ncol(pca_data)]
+
+
+pca_data$plot <- paste(pca_data$Timepoint,pca_data$Treatment,sep = "_")
+pca_data$plot <- factor(pca_data$plot,levels = c("4hpi_Uninfected","4hpi_Mock","4hpi_ZIKV_Dakar","4hpi_ZIKV_Malaysia","8hpi_Uninfected","8hpi_Mock","8hpi_ZIKV_Dakar","8hpi_ZIKV_Malaysia","10hpi_Uninfected","10hpi_Mock","10hpi_ZIKV_Dakar","10hpi_ZIKV_Malaysia","24hpi_Uninfected","24hpi_Mock","24hpi_ZIKV_Dakar","24hpi_ZIKV_Malaysia","48hpi_Uninfected","48hpi_Mock","48hpi_ZIKV_Dakar","48hpi_ZIKV_Malaysia","72hpi_Uninfected","72hpi_Mock","72hpi_ZIKV_Dakar","72hpi_ZIKV_Malaysia"))
+
+
+sums <- ref_relative_data %>% dplyr::group_by(Sample_ID) %>% dplyr::summarise(total = sum(raw_counts))
+
+pca_data$Sample_ID <- rownames(pca_data)
+pca_data <- left_join(pca_data, sums, by = "Sample_ID")
+
+
+
+i <- c(48:62,64,67)  
+pca_data[ , i] <- apply(pca_data[ , i], 2,            # Specify own function within apply
+                    function(x) as.numeric(as.character(x)))
+
+raw <- PCA(pca_data,quali.sup = c(45:47,63,65,66), quanti.sup = c(48:62,64,67), graph = FALSE)
+fviz_screeplot(raw, addlabels = TRUE)
+
+
+
+var <- get_pca_var(raw)
+
+# Contribution of variables
+head(var$contrib)
+
+for (i in 1:5) {
+print(fviz_contrib(raw, choice = "var", axes = i, top = 10))  
+}
+
+
+#basic PCA, unlabeled
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 46,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 5),
+            invisible="quali") + scale_shape_manual(values=c(19,19,19,19)) + scale_color_manual(values = c("gray","black","red")) + theme_pca()
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 44,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 5)) + theme_pca()
+
+#****
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.05, habillTreatment = 48,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 5)) + theme_pca() + scale_shape_manual(values = c(0,15,1,16,2,17,3,12,4,7,rep(20,12),8,9,10,11,12,14,23,24))
+
+
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.4,
+            col.ind = log2(raw$call$X$total),
+            repel = TRUE,
+            title = "PCA Raw Counts",
+            select.var = list(contrib = 5)) + theme_pca() + scale_color_viridis(direction = -1)
+
+fviz_pca_biplot(raw,
+            repel = TRUE,
+            geom = "point",alpha = 0,
+            title = "PCA Raw Counts",
+            select.var = list(contrib = 5)) +
+  theme_Publication() + 
+  geom_point(aes(shape = (raw$call$X$Treatment), color = (raw$call$X$Timepoint)),size = 4) +scale_shape_manual(values = c(19,5))
+
+```
+
+
+
+#PCA based on tethered counts (non-log ratio)
+```{r}
+pca_data <- ref_relative_data[,c(1,2,5)]
+pca_data <- dcast(data = pca_data,formula = Sample_ID ~ gene )
+
+
+endog <- subset(fData,Class=="endogenous")
+endog <- c("Sample_ID",as.character(endog$gene))
+pca_data <- pca_data[,endog]
+
+pca_data <- left_join(pca_data, pData, by = c("Sample_ID" = "Sample_ID"))
+rownames(pca_data) <- pca_data$Sample_ID
+pca_data <- pca_data[,2:ncol(pca_data)]
+
+
+pca_data$plot <- paste(pca_data$Timepoint,pca_data$Treatment,sep = "_")
+pca_data$plot <- factor(pca_data$plot,levels = c("4hpi_Uninfected","4hpi_Mock","4hpi_ZIKV_Dakar","4hpi_ZIKV_Malaysia","8hpi_Uninfected","8hpi_Mock","8hpi_ZIKV_Dakar","8hpi_ZIKV_Malaysia","10hpi_Uninfected","10hpi_Mock","10hpi_ZIKV_Dakar","10hpi_ZIKV_Malaysia","24hpi_Uninfected","24hpi_Mock","24hpi_ZIKV_Dakar","24hpi_ZIKV_Malaysia","48hpi_Uninfected","48hpi_Mock","48hpi_ZIKV_Dakar","48hpi_ZIKV_Malaysia","72hpi_Uninfected","72hpi_Mock","72hpi_ZIKV_Dakar","72hpi_ZIKV_Malaysia"))
+
+
+sums <- ref_relative_data %>% dplyr::group_by(Sample_ID) %>% dplyr::summarise(total = sum(raw_counts))
+
+pca_data$Sample_ID <- rownames(pca_data)
+pca_data <- left_join(pca_data, sums, by = "Sample_ID")
+
+
+
+i <- c(48:62,64,67)  
+pca_data[ , i] <- apply(pca_data[ , i], 2,            # Specify own function within apply
+                    function(x) as.numeric(as.character(x)))
+
+raw <- PCA(pca_data,quali.sup = c(45:47,63,65,66), quanti.sup = c(48:62,64,67), graph = FALSE)
+fviz_screeplot(raw, addlabels = TRUE)
+
+
+
+
+var <- get_pca_var(raw)
+
+# Contribution of variables
+head(var$contrib)
+
+for (i in 1:5) {
+print(fviz_contrib(raw, choice = "var", axes = i, top = 10))  
+}
+
+
+#basic PCA, unlabeled
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 65,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$MX1,
+            repel = TRUE,
+            title = "MX1",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$IFNL2,
+            repel = TRUE,
+            title = "IFNL2",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$OAS1.x,
+            repel = TRUE,
+            title = "OAS TRANSCRIPTS",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$OAS1.y,
+            repel = TRUE,
+            title = "OAS PROTEIN",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$ZIKV_NS5,
+            repel = TRUE,
+            title = "ZIKV_NS5",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$PFU,
+            repel = TRUE,
+            title = "PFU",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$total,
+            repel = TRUE,
+            title = "Total raw counts#",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+#fviz_pca_biplot(raw,
+#            repel = TRUE,
+##            geom = "point",alpha = 0,
+#            title = "All samples",
+#            select.var = list(contrib = 5)) +
+#  theme_Publication() + 
+#  geom_point(aes(shape = (raw$call$X$Treatment), color = (raw$call$X$Timepoint)),size = 4) +scale_shape_manual(values = c(19,4))
+```
+
+
+
+
+#PCA based on TLR (log2 of GOI:tether ratio )
+```{r}
+pca_data <- ref_relative_data[,c(1,2,27)]
+pca_data <- dcast(data = pca_data,formula = Sample_ID ~ gene )
+
+
+endog <- subset(fData,Class=="endogenous")
+endog <- c("Sample_ID",as.character(endog$gene))
+pca_data <- pca_data[,endog]
+
+pca_data <- left_join(pca_data, pData, by = c("Sample_ID" = "Sample_ID"))
+rownames(pca_data) <- pca_data$Sample_ID
+pca_data <- pca_data[,2:ncol(pca_data)]
+
+
+pca_data$plot <- paste(pca_data$Timepoint,pca_data$Treatment,sep = "_")
+pca_data$plot <- factor(pca_data$plot,levels = c("4hpi_Uninfected","4hpi_Mock","4hpi_ZIKV_Dakar","4hpi_ZIKV_Malaysia","8hpi_Uninfected","8hpi_Mock","8hpi_ZIKV_Dakar","8hpi_ZIKV_Malaysia","10hpi_Uninfected","10hpi_Mock","10hpi_ZIKV_Dakar","10hpi_ZIKV_Malaysia","24hpi_Uninfected","24hpi_Mock","24hpi_ZIKV_Dakar","24hpi_ZIKV_Malaysia","48hpi_Uninfected","48hpi_Mock","48hpi_ZIKV_Dakar","48hpi_ZIKV_Malaysia","72hpi_Uninfected","72hpi_Mock","72hpi_ZIKV_Dakar","72hpi_ZIKV_Malaysia"))
+
+
+sums <- ref_relative_data %>% dplyr::group_by(Sample_ID) %>% dplyr::summarise(total = sum(raw_counts))
+
+pca_data$Sample_ID <- rownames(pca_data)
+pca_data <- left_join(pca_data, sums, by = "Sample_ID")
+
+
+
+i <- c(48:62,64,67)  
+pca_data[ , i] <- apply(pca_data[ , i], 2,            # Specify own function within apply
+                    function(x) as.numeric(as.character(x)))
+
+raw <- PCA(pca_data,quali.sup = c(45:47,63,65,66), quanti.sup = c(48:62,64,67), graph = FALSE)
+fviz_screeplot(raw, addlabels = TRUE)
+
+
+
+
+var <- get_pca_var(raw)
+
+# Contribution of variables
+head(var$contrib)
+
+for (i in 1:5) {
+print(fviz_contrib(raw, choice = "var", axes = i, top = 10))  
+}
+
+
+#basic PCA, unlabeled
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 65,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "All samples",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 65,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,3),
+            title = "All samples",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 65,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,4),
+            title = "All samples",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$MX1,
+            repel = TRUE,
+            title = "MX1",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$IFNL2,
+            repel = TRUE,
+            title = "IFNL2",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$OAS1.x,
+            repel = TRUE,
+            title = "OAS TRANSCRIPTS",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$OAS1.y,
+            repel = TRUE,
+            title = "OAS PROTEIN",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$ZIKV_NS5,
+            repel = TRUE,
+            title = "ZIKV_NS5",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$PFU,
+            repel = TRUE,
+            title = "PFU",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, 
+            col.ind = raw$call$X$total,
+            repel = TRUE,
+            title = "Total raw counts#",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_viridis() + theme_pca()
+
+#fviz_pca_biplot(raw,
+#            repel = TRUE,
+##            geom = "point",alpha = 0,
+#            title = "All samples",
+#            select.var = list(contrib = 5)) +
+#  theme_Publication() + 
+#  geom_point(aes(shape = (raw$call$X$Treatment), color = (raw$call$X$Timepoint)),size = 4) +scale_shape_manual(values = c(19,4))
+```
+
+#FOR MANUSCRIPT
+```{r}
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 65,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "PCA: all genes",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+```
+
+
+
+#PCA based on TLR (log2 of GOI:tether ratio ) - JUST IFN/cytokines
+```{r}
+ifn_cyto <- subset(ref_relative_data, gene %in% c("IFNB1","IFNL2","IFNL3","IFNL1","CXCL10","TNF","IFNA2","IL1B","IL1A","CCL4","IL6","CCL3","IFNA4","IL18","CCL2"))
+
+pca_ifn <- ifn_cyto[,c(1,2,27)]
+pca_ifn <- dcast(data = pca_ifn,formula = Sample_ID ~ gene )
+
+
+#endog <- subset(fData,Class=="endogenous")
+#endog <- c("Sample_ID",as.character(endog$gene))
+#pca_ifn <- pca_ifn[,endog]
+
+pca_ifn <- left_join(pca_ifn, pData, by = c("Sample_ID" = "Sample_ID"))
+rownames(pca_ifn) <- pca_ifn$Sample_ID
+pca_ifn <- pca_ifn[,2:ncol(pca_ifn)]
+
+
+pca_ifn$plot <- paste(pca_ifn$Timepoint,pca_ifn$Treatment,sep = "_")
+pca_ifn$plot <- factor(pca_ifn$plot,levels = c("4hpi_Uninfected","4hpi_Mock","4hpi_ZIKV_Dakar","4hpi_ZIKV_Malaysia","8hpi_Uninfected","8hpi_Mock","8hpi_ZIKV_Dakar","8hpi_ZIKV_Malaysia","10hpi_Uninfected","10hpi_Mock","10hpi_ZIKV_Dakar","10hpi_ZIKV_Malaysia","24hpi_Uninfected","24hpi_Mock","24hpi_ZIKV_Dakar","24hpi_ZIKV_Malaysia","48hpi_Uninfected","48hpi_Mock","48hpi_ZIKV_Dakar","48hpi_ZIKV_Malaysia","72hpi_Uninfected","72hpi_Mock","72hpi_ZIKV_Dakar","72hpi_ZIKV_Malaysia"))
+
+
+sums <- ref_relative_data %>% dplyr::group_by(Sample_ID) %>% dplyr::summarise(total = sum(raw_counts))
+
+pca_ifn$Sample_ID <- rownames(pca_ifn)
+pca_ifn <- left_join(pca_ifn, sums, by = "Sample_ID")
+
+pca_ifn <- pca_ifn[,c(1:18,36)]
+
+#i <- c(48:62,64,67)  
+#pca_ifn[ , i] <- apply(pca_ifn[ , i], 2,            # Specify own function within apply
+#                    function(x) as.numeric(as.character(x)))
+
+raw <- PCA(pca_ifn,quali.sup = c(16:19), graph = FALSE)
+fviz_screeplot(raw, addlabels = TRUE)
+
+
+
+
+var <- get_pca_var(raw)
+
+# Contribution of variables
+head(var$contrib)
+
+for (i in 1:5) {
+print(fviz_contrib(raw, choice = "var", axes = i, top = 10))  
+}
+
+
+#basic PCA, unlabeled
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 19,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "IFN and Cytokines",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+
+```
+
+#FOR MANUSCRIPT
+```{r}
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 19,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "IFN and Cytokines",
+            select.var = list(contrib = 10),
+            invisible="quali")  +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))+ scale_color_manual(values = rep(c("gray","black","red"),6)) + theme_pca()
+```
+
+
+#PCA based on TLR (log2 of GOI:tether ratio ) - JUST "ISGs"
+```{r}
+isg <- subset(ref_relative_data, gene %in% c("IRF5","DHX58","ISG20","IRF1","MX1","IFI44","ISG15","IFIT1","IRF7","DDX58","OAS1","MX2","IFIH1","GBP1","IFITM1","IFIT2","RSAD2","IRF2","TLR3","EIF2AK2","TRIM25","GBP2","IFNAR1","IFNAR2"))
+
+unique(isg$gene)
+
+pca_isg <- isg[,c(1,2,27)]
+pca_isg <- dcast(data = pca_isg,formula = Sample_ID ~ gene )
+
+
+#endog <- subset(fData,Class=="endogenous")
+#endog <- c("Sample_ID",as.character(endog$gene))
+#pca_isg <- pca_isg[,endog]
+
+pca_isg <- left_join(pca_isg, pData, by = c("Sample_ID" = "Sample_ID"))
+rownames(pca_isg) <- pca_isg$Sample_ID
+pca_isg <- pca_isg[,2:ncol(pca_isg)]
+
+
+pca_isg$plot <- paste(pca_isg$Timepoint,pca_isg$Treatment,sep = "_")
+pca_isg$plot <- factor(pca_isg$plot,levels = c("4hpi_Uninfected","4hpi_Mock","4hpi_ZIKV_Dakar","4hpi_ZIKV_Malaysia","8hpi_Uninfected","8hpi_Mock","8hpi_ZIKV_Dakar","8hpi_ZIKV_Malaysia","10hpi_Uninfected","10hpi_Mock","10hpi_ZIKV_Dakar","10hpi_ZIKV_Malaysia","24hpi_Uninfected","24hpi_Mock","24hpi_ZIKV_Dakar","24hpi_ZIKV_Malaysia","48hpi_Uninfected","48hpi_Mock","48hpi_ZIKV_Dakar","48hpi_ZIKV_Malaysia","72hpi_Uninfected","72hpi_Mock","72hpi_ZIKV_Dakar","72hpi_ZIKV_Malaysia"))
+
+
+sums <- ref_relative_data %>% dplyr::group_by(Sample_ID) %>% dplyr::summarise(total = sum(raw_counts))
+
+pca_isg$Sample_ID <- rownames(pca_isg)
+pca_isg <- left_join(pca_isg, sums, by = "Sample_ID")
+
+pca_isg <- pca_isg[,c(1:24,45)]
+
+#i <- c(48:62,64,67)  
+#pca_isg[ , i] <- apply(pca_isg[ , i], 2,            # Specify own function within apply
+#                    function(x) as.numeric(as.character(x)))
+
+raw <- PCA(pca_isg,quali.sup = c(25), graph = FALSE)
+fviz_screeplot(raw, addlabels = TRUE)
+
+
+
+
+var <- get_pca_var(raw)
+
+# Contribution of variables
+head(var$contrib)
+
+for (i in 1:5) {
+print(fviz_contrib(raw, choice = "var", axes = i, top = 10))  
+}
+
+
+#basic PCA, unlabeled
+fviz_pca_biplot(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6,
+            repel = TRUE,
+            title = "All samples",
+            select.var = list(contrib = 50),
+            invisible="quali")
+
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 25,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "ISGs",
+            invisible="quali")  + theme_pca() +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))  + scale_color_manual(values = rep(c("gray","black","red"),6))
+
+```
+#FOR MANUSCRIPT
+```{r}
+fviz_pca_ind(raw,
+            geom="point",  pointsize = 5,alpha = 0.6, habillTreatment = 25,addEllipses = FALSE,
+            repel = TRUE, axes = c(1,2),
+            title = "ISGs",
+            invisible="quali")  + theme_pca() +scale_shape_manual(values = c(rep(1,3),rep(22,3),rep(2,3),rep(19,3),rep(15,3),rep(17,3)))  + scale_color_manual(values = rep(c("gray","black","red"),6))
+```
+
+to do:
+cluster (for->)
+FC heatmaps
+
+
+#Diana clustering ifn
+```{r}
+TLR_diana_df <- pca_ifn
+#TLR_diana_df$label <- paste(TLR_diana_df$Treatment,TLR_diana_df$Timepoint)
+
+#make rownames meaningful 
+rownames(TLR_diana_df) <- make.names(TLR_diana_df$plot,unique = TRUE)
+library(cluster)
+
+#cluster genes
+gene_pearson_distance <- as.dist(1-cor(TLR_diana_df[,1:15], method='pearson'))
+diana_ifn <- diana(x = gene_pearson_distance)
+plot(diana_ifn)
+
+#cluster samples
+sample_pearson_distance <- as.dist(1-cor(t(TLR_diana_df[,1:15]), method='pearson'))
+diana_sample <- diana(x = sample_pearson_distance)
+plot(diana_sample)
+
+diana_ifn_order <- diana_ifn
+diana_ifn_order$order.lab <- gsub(".x","",diana_ifn_order$order.lab)
+diana_ifn_order <-diana_ifn_order$order.lab
+```
+
+
+
+#Diana clustering isg
+```{r}
+TLR_diana_df <- pca_isg
+#TLR_diana_df$label <- paste(TLR_diana_df$Treatment,TLR_diana_df$Timepoint)
+
+#make rownames meaningful 
+rownames(TLR_diana_df) <- make.names(TLR_diana_df$plot,unique = TRUE)
+library(cluster)
+
+#cluster genes
+gene_pearson_distance <- as.dist(1-cor(TLR_diana_df[,1:24], method='pearson'))
+diana_isg <- diana(x = gene_pearson_distance)
+plot(diana_isg)
+
+#cluster samples
+sample_pearson_distance <- as.dist(1-cor(t(TLR_diana_df[,1:24]), method='pearson'))
+diana_sample <- diana(x = sample_pearson_distance)
+plot(diana_sample)
+
+diana_isg_order <- diana_isg
+diana_isg_order$order.lab <- gsub(".x","",diana_isg_order$order.lab)
+diana_isg_order <-diana_isg_order$order.lab
+```
+
+
+
+
+
+
+
+
+*FOLD CHANGE*
+#FOR MANUSCRIPT
+
+Tethered counts
+```{r}
+write.csv("amy_lu_anchored_gene_counts.csv",x = ref_relative_data[,c(1:8,26)])
+```
+
+```{r}
+
+```
+
+```{r}
+#create gene_tp column
+ref_relative_data$gene_tp <- paste(ref_relative_data$gene,ref_relative_data$Timepoint,sep = "_")
+
+#make virus specific subsets
+dakar <- subset(ref_relative_data,Treatment=="ZIKV_Dakar")
+malaysia <- subset(ref_relative_data,Treatment=="ZIKV_Malaysia")
+
+#create gene_tp column
+#ref_relative_data$gene_tp <- paste(ref_relative_data$gene,ref_relative_data$Timepoint,sep = "_")
+
+#summarise each mock gene-tp 
+mock_comps <- ref_relative_data %>% filter(Treatment=="Mock") %>% dplyr::group_by(Timepoint,gene) %>% dplyr::summarise(avg = mean(ratio_goi_to_tether))
+
+mock_comps$gene_tp <- paste(mock_comps$gene,mock_comps$Timepoint,sep = "_")
+
+dakar <- left_join(dakar,mock_comps, by = "gene_tp")
+dakar$fold_change <- dakar$ratio_goi_to_tether/dakar$avg
+
+
+malaysia <- left_join(malaysia,mock_comps, by = "gene_tp")
+malaysia$fold_change <- malaysia$ratio_goi_to_tether/malaysia$avg
+
+
+fc_df <- rbind(dakar,malaysia)
+#fc_df$gene.x <- factor(fc_df$gene.x,levels = diana_gene_order)
+
+fc_df$log2fc <- log2(fc_df$fold_change)
+
+
+#plot
+ggplot(fc_df,aes(Timepoint.x,log2(fold_change),color = Treatment)) +
+  stat_summary(aes(group = Treatment),geom = "line",fun = "mean",size = 1) +
+  scale_color_manual(values = c("black","red"))+
+  facet_wrap(~gene.x,scales = "free_y") + 
+  theme_bars_boxes() + theme(axis.text.x = element_text(size = 8))
+
+
+
+fc_df <- fc_df %>% dplyr::mutate(fc_bin = ntile(fold_change,n = 15))
+
+
+fc_ifn <- subset(fc_df, gene.x %in% diana_ifn_order)
+fc_ifn$gene.x <- factor(fc_ifn$gene.x,levels = diana_ifn_order)
+    
+ggplot(fc_ifn,aes(Treatment,gene.x,fill = log2(fold_change))) +
+  geom_tile(color = "white",lwd = 1) + 
+  facet_wrap(~Timepoint.x,nrow = 1) +
+  scale_fill_continuous_divergingx(palette = 'p',rev = TRUE, mid = 0.0) + 
+  theme_bars_boxes()  
+
+ggplot(fc_ifn,aes(Timepoint.x,log2(fold_change),color = Treatment)) +
+  stat_summary(aes(group = Treatment),geom = "line",fun = "mean",size = 1) +
+  scale_color_manual(values = c("black","red"))+
+  facet_wrap(~gene.x,scales = "free_y") + 
+  theme_bars_boxes() + theme(axis.text.x = element_text(size = 8))
+  
+fc_isg <- subset(fc_df, gene.x %in% diana_isg_order)
+fc_isg$gene.x <- factor(fc_isg$gene.x,levels = diana_isg_order)
+
+ggplot(fc_isg,aes(Treatment,gene.x,fill = log2(fold_change))) +
+  geom_tile(color = "white",lwd = 1) + 
+  facet_wrap(~Timepoint.x,nrow = 1) +
+  scale_fill_continuous_divergingx(palette = 'p',rev = TRUE, mid = 0.0) + 
+  theme_bars_boxes()  
+
+ggplot(fc_isg,aes(Timepoint.x,log2(fold_change),color = Treatment)) +
+  stat_summary(aes(group = Treatment),geom = "line",fun = "mean",size = 1) +
+  scale_color_manual(values = c("black","red"))+
+  facet_wrap(~gene.x,scales = "free_y",nrow =4 ) + 
+  theme_bars_boxes() + theme(axis.text.x = element_text(size = 8))
+  
+```
+
+```{r}
+write.csv("amy_lu_fold_change_df.csv",x = fc_df[,c(1:8,31,32)])
+```
+
+
+#FOLD CHANGE STATS
+```{r}
+library(ggpubr)
+
+ggplot(subset(fc_df,gene.x=="IRF7"),aes(Treatment,fold_change)) +
+  geom_boxplot()+
+  geom_point(aes(color = Timepoint.x,group = Treatment)) + 
+  stat_compare_means(comparisons = list(c("ZIKV_Dakar","ZIKV_Malaysia")),method = "t.test",tip.length = 0) +
+  facet_grid(cols = vars(Timepoint.x))  +
+  theme_bars_boxes() + ggtitle("IRF7 fold changes")
+```
+
+```{r}
+library(rstatix)
+
+stat.test <- fc_df %>%
+  #filter(Timepoint.x %in% c("24hpi","48hpi")) %>%
+  filter(Class=="endogenous") %>%
+  group_by(Timepoint.x,gene.x) %>%
+  t_test(formula = fold_change ~ Treatment) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat.test 
+
+stats <- data.frame(stat.test)
+
+
+
+stats_ifn <- c("IFNB1","IFNL2","IFNL3","IFNL1","CXCL10","TNF","IFNA2","IL1B","IL1A","CCL4","IL6","CCL3","IFNA4","IL18","CCL2")
+
+stat.test.ifn <- fc_df %>%
+  #filter(Timepoint.x %in% c("24hpi","48hpi")) %>%
+  #filter(Class=="endogenous") %>%
+  filter(gene.x %in% stats_ifn) %>%
+  group_by(Timepoint.x,gene.x) %>%
+  t_test(formula = fold_change ~ Treatment) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+
+stats.ifn <- data.frame(stat.test.ifn)
+
+
+
+stats_isg <- c("IRF5","DHX58","ISG20","IRF1","MX1","IFI44","ISG15","IFIT1","IRF7","DDX58","OAS1","MX2","IFIH1","GBP1","IFITM1","IFIT2","RSAD2","IRF2","TLR3","EIF2AK2","TRIM25","GBP2","IFNAR1","IFNAR2")
+
+stat.test.isg <- fc_df %>%
+  #filter(Timepoint.x %in% c("24hpi","48hpi")) %>%
+  #filter(Class=="endogenous") %>%
+  filter(gene.x %in% stats_isg) %>%
+  group_by(Timepoint.x,gene.x) %>%
+  t_test(formula = fold_change ~ Treatment) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+
+stats.isg <- data.frame(stat.test.isg)
+
+
+
+
+
+
+
+
+write_csv(x = stats,file = "~/fruitfly/2022_amy_lu_nanostring/fold_change_t_test.csv")
+
+write_csv(x = stats.ifn,file = "~/fruitfly/2022_amy_lu_nanostring/IFN_fold_change_t_test.csv")
+write_csv(x = stats.isg,file = "~/fruitfly/2022_amy_lu_nanostring/ISG_fold_change_t_test.csv")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
